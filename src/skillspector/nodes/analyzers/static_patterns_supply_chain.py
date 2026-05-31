@@ -13,12 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Static patterns: supply chain (SC1–SC6) and trigger analysis (TR1–TR3).
+"""Static patterns: supply chain (SC1–SC7) and trigger analysis (TR1–TR3).
 
 SC1–SC3: regex-based pattern matching (original implementation).
 SC4: Known vulnerable dependencies — live OSV.dev lookup with static fallback.
 SC5: Abandoned dependencies — flags known-abandoned or archived packages.
 SC6: Typosquatting — flags package names similar to popular packages.
+SC7: Dynamic skill update — flags SKILL.md / manifest that references an external
+     URL for runtime-fetched instructions, pitfalls, or pattern updates. A skill
+     that "phones home" for its own pattern data can ship clean and weaponize
+     itself after install. The canonical example is the `llms.txt`/SKILL.md
+     update-URL convention (see e.g. https://mpcsec.org/SKILL.md which points to
+     https://mpcsec.org/llms.txt for "up-to-date pitfall material"). SC7 is
+     evidence of dynamic-update intent, not necessarily a malicious payload.
 TR1–TR3: Trigger analysis — flags overly broad, shadowing, or baiting triggers.
 
 Node and analyze() in one module.
@@ -73,6 +80,59 @@ SC2_PATTERNS = [
     (r"subprocess\.[^(]+\([^)]*(?:curl|wget)\s+https?://", 0.8),
     (r"download\s+and\s+(?:run|execute)\s+(?:the\s+)?script", 0.7),
     (r"run\s+(?:this|the)\s+(?:following\s+)?(?:curl|wget)\s+command", 0.6),
+]
+# SC7: Dynamic Skill Update — skill references a URL it intends to fetch
+# at runtime for instructions, pitfalls, or pattern updates. A skill that
+# auto-updates its own behaviour can pass any static review and then load
+# arbitrary instructions after install. Detect:
+#   1. Frontmatter or YAML fields that name an external update source
+#      (llms_url, update_url, self_update, instructions_url, etc.).
+#   2. URLs that match the llms.txt-style dynamic-instruction convention
+#      (https://example.com/llms.txt, /SKILL.md, /pitfalls.txt, /patterns.json).
+#   3. Markdown prose that describes the skill fetching its own updates.
+#   4. Runtime code that fetches one of those URLs (compounds with SC2/SC3).
+SC7_PATTERNS = [
+    # Frontmatter / YAML field: explicit auto-update declaration.
+    (
+        r"(?im)^[\s\-*]*"
+        r"(?:llms_url|llms_txt|update_url|skill_url|self_update|"
+        r"instructions_url|patterns_url|pitfalls_url|rules_url|"
+        r"manifest_update|policy_update)\s*[:=]\s*['\"]?https?://",
+        0.85,
+    ),
+    # llms.txt / SKILL.md / pitfalls / patterns naming convention in any URL.
+    (
+        r"https?://[A-Za-z0-9._\-/]+/"
+        r"(?:llms?|skill|pitfalls?|instructions?|rules?|patterns?|policy)"
+        r"\.(?:txt|md|json|ya?ml)\b",
+        0.7,
+    ),
+    # Prose describing dynamic fetching of skill content.
+    (
+        r"(?i)(?:fetch|download|pull|load|sync|retrieve)\s+"
+        r"(?:the\s+)?(?:latest|current|up-to-date)\s+"
+        r"(?:pitfalls?|patterns?|instructions?|rules?|skill(?:\s+content)?|"
+        r"updates?|prompts?)\s+from\s+https?://",
+        0.75,
+    ),
+    (
+        r"(?i)(?:self[-\s]?updates?|auto[-\s]?updates?|auto[-\s]?refreshes?)\s+"
+        r"(?:from|via)\s+https?://",
+        0.8,
+    ),
+    (
+        r"(?i)for\s+(?:up[-\s]?to[-\s]?date|latest|current)\s+"
+        r"(?:pitfalls?|patterns?|instructions?|rules?)\s*[,:]?\s+see\s+https?://",
+        0.7,
+    ),
+    # Code that fetches one of the llms.txt-style URLs.
+    (
+        r"(?:urllib|requests|httpx|aiohttp|fetch|axios)"
+        r"[^(\n]{0,40}\(\s*['\"]?https?://[^'\")\s]+/"
+        r"(?:llms?|skill|pitfalls?|patterns?|instructions?|rules?)"
+        r"\.(?:txt|md|json|ya?ml)",
+        0.85,
+    ),
 ]
 SC3_PATTERNS = [
     (r"exec\s*\(\s*(?:base64\.)?b64decode\s*\(", 0.95),
@@ -510,6 +570,37 @@ def analyze(content: str, file_path: str, file_type: str) -> list[AnalyzerFindin
                         matched_text=match.group(0)[:200],
                     )
                 )
+    # SC7 fires on every file type. The dominant signal is a SKILL.md / manifest
+    # naming an update source, but skills also embed update URLs in Python loaders,
+    # shell wrappers, and config files. Deduplication is handled per-match
+    # because patterns 1 + 2 can both match the same llms.txt URL line.
+    sc7_seen: set[tuple[int, int]] = set()
+    for pattern, confidence in SC7_PATTERNS:
+        for match in re.finditer(pattern, content, re.MULTILINE):
+            span = match.span()
+            if span in sc7_seen:
+                continue
+            sc7_seen.add(span)
+            if _is_trusted_source(match.group(0)):
+                # github.com/raw.githubusercontent etc. — trusted update channels
+                # are still worth surfacing but at lower confidence and LOW severity.
+                adj_conf = min(confidence, 0.3)
+                sev = Severity.LOW
+            else:
+                adj_conf = confidence
+                sev = Severity.MEDIUM
+            findings.append(
+                AnalyzerFinding(
+                    rule_id="SC7",
+                    message="Dynamic Skill Update",
+                    severity=sev,
+                    location=loc(get_line_number(content, span[0])),
+                    confidence=adj_conf,
+                    tags=tag,
+                    context=ctx(span[0]),
+                    matched_text=match.group(0)[:200],
+                )
+            )
     return findings
 
 
